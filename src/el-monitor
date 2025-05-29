@@ -1,0 +1,87 @@
+#!/usr/bin/python
+import socket
+import os
+import datetime
+from termcolor import colored
+
+OUTGOING_SOCKET_PATH = "/tmp/unix_outgoing_socket"
+LOG_FILE_PATH = "/var/log/echolog"
+
+def colorize_log(message_type, timestamp, message):
+    if message_type == "error":
+        type_color = "red"
+    elif message_type == "success":
+        type_color = "green"
+    elif message_type == "warning":
+        type_color = "yellow"
+    elif message_type == "info":
+        type_color = "blue"
+    elif message_type == "debug":
+        type_color = "magenta"
+    elif message_type == "notice":
+        type_color = "cyan"
+    else:
+        type_color = "white"
+
+    colored_type = colored(message_type, type_color, attrs=["bold"])
+    colored_message = f"{colored('[', type_color, attrs=['bold'])} {message} {colored(']', type_color, attrs=['bold'])}"
+    return f"{timestamp} {colored_type} {colored_message}"
+    
+
+def format_timestamp(date, time):
+    try:
+        datetime_str = f"{date} {time}"
+        dt = datetime.datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%m-%d %H:%M:%S")
+    except ValueError:
+        return "0000 000000"
+
+        
+def print_log_messages(log_file_path, num_lines=100):
+    try:
+        with open(log_file_path, 'r') as log_file:
+            lines = log_file.readlines()[-num_lines:]
+            for line in lines:
+                timestamp, message_type, message = extract_log_parts(line)
+                formatted_timestamp = format_timestamp(*timestamp.split())
+                colored_message = colorize_log(message_type, formatted_timestamp, message)
+                print(colored_message)
+    except Exception as e:
+        print(f"Failed to read log file: {e}")
+
+def extract_log_parts(line):
+    parts = line.split()
+    date, time, message_type = parts[:3]
+    message = ' '.join(parts[3:])
+    timestamp = f"{date} {time}"
+    return timestamp, message_type, message
+
+def main():
+    # Print the first 100 lines from the log file
+    print_log_messages(LOG_FILE_PATH, 100)
+    
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+    try:
+        sock.connect(OUTGOING_SOCKET_PATH)
+    except socket.error as e:
+        print(f"Failed to connect: {e}")
+        return
+
+    try:
+        while True:
+            data = sock.recv(256)
+            if not data:
+                break
+            message = data.decode().strip()
+            timestamp, message_type, message_content = extract_log_parts(message)
+            formatted_timestamp = format_timestamp(*timestamp.split())
+            colored_message = colorize_log(message_type, formatted_timestamp, message_content)
+            print(colored_message)
+    except socket.error as e:
+        print(f"Failed to read: {e}")
+    finally:
+        sock.close()
+
+if __name__ == "__main__":
+    main()

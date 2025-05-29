@@ -1,0 +1,65 @@
+#!/usr/bin/python
+import socket
+import os
+import sys
+import getopt
+
+SOCKET_PATH = "/tmp/unix_incoming_socket"
+
+def print_usage(prog_name):
+    print(f"Usage: {prog_name} -t <type> -m <message>")
+
+def main(argv):
+    type = None
+    message = None
+
+    try:
+        opts, args = getopt.getopt(argv, "t:m:")
+    except getopt.GetoptError:
+        print_usage(argv[0])
+        sys.exit(1)
+
+    for opt, arg in opts:
+        if opt == '-t':
+            type = arg
+        elif opt == '-m':
+            message = arg
+
+    if not type or not message:
+        # Check if message is provided through a pipe
+        if not message and sys.stdin.isatty():
+            print_usage(argv[0])
+            sys.exit(1)
+        elif not message:
+#            print("Reading message from stdin")
+            message = sys.stdin.read().strip()
+
+    # Create the full message
+    full_message = f"{type} {message}"
+
+    # Create the socket
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+    # Set up the server address
+    server_address = SOCKET_PATH
+
+    # Connect to the server
+    try:
+        sock.connect(server_address)
+    except socket.error as e:
+        print(f"Failed to connect to {server_address}: {e}")
+        sock.close()
+        sys.exit(1)
+
+    # Send the message in chunks
+    try:
+        sock.sendall(full_message.encode())
+        #print(f"Message sent: {full_message}")
+    except socket.error as e:
+        print(f"Failed to send message: {e}")
+    finally:
+        sock.close()
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
+

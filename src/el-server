@@ -1,0 +1,100 @@
+#!/usr/bin/python
+import socket
+import os
+import time
+import select
+
+INCOMING_SOCKET_PATH = "/tmp/unix_incoming_socket"
+OUTGOING_SOCKET_PATH = "/tmp/unix_outgoing_socket"
+MAX_CLIENTS = 10
+LOG_FILE_PATH = "/var/log/echolog"
+
+def log_message(message):
+    try:
+        with open(LOG_FILE_PATH, 'a') as log_file:
+            log_file.write(message + "\n")
+    except Exception as e:
+        print(f"Failed to log message: {e}")
+
+def get_timestamp():
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+def main():
+    incoming_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    broadcast_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+    for sock_path in [INCOMING_SOCKET_PATH, OUTGOING_SOCKET_PATH]:
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            if os.path.exists(sock_path):
+                raise
+
+    incoming_sock.bind(INCOMING_SOCKET_PATH)
+    broadcast_sock.bind(OUTGOING_SOCKET_PATH)
+
+    os.chmod(INCOMING_SOCKET_PATH, 0o666)
+    os.chmod(OUTGOING_SOCKET_PATH, 0o666)
+
+    incoming_sock.listen(5)
+    broadcast_sock.listen(5)
+
+    print(f"Server listening on {INCOMING_SOCKET_PATH} for incoming messages and broadcasting on {OUTGOING_SOCKET_PATH}")
+
+    clients = [incoming_sock, broadcast_sock]
+    broadcast_clients = []
+
+    while True:
+        readable, _, _ = select.select(clients, [], [])
+
+        for sock in readable:
+            if sock is incoming_sock:
+                client_sock, _ = incoming_sock.accept()
+                message = []
+                while True:
+                    chunk = client_sock.recv(4096).decode()
+                    if not chunk:
+                        break
+                    message.append(chunk)
+                message = ''.join(message)
+                if message:
+                    message = message.replace("\n", "[/n]")  # Replace newline characters with substitute
+                    timestamp = get_timestamp()
+                    log_entry = f"{timestamp} {message}"
+                    print(f"Received message: {log_entry}")
+                    log_message(log_entry)
+                    # Broadcast the message to all connected broadcast clients
+                    for bclient in broadcast_clients[:]:
+                        try:
+                            bclient.send(log_entry.encode())
+                        except (OSError, BrokenPipeError) as e:
+                            print(f"Error sending message to client: {e}")
+                            broadcast_clients.remove(bclient)
+                            bclient.close()
+                client_sock.close()
+            elif sock is broadcast_sock:
+                new_broadcast_client, _ = broadcast_sock.accept()
+                if len(broadcast_clients) < MAX_CLIENTS:
+                    broadcast_clients.append(new_broadcast_client)
+                else:
+                    print("Max clients reached. Closing new broadcast client.")
+                    new_broadcast_client.close()
+            else:
+                try:
+                    message = sock.recv(4096).decode()
+                    if not message:
+                        raise ValueError("No message received")
+                except Exception as e:
+                    print(f"Error reading from client: {e}")
+                    clients.remove(sock)
+                    sock.close()
+
+    incoming_sock.close()
+    broadcast_sock.close()
+
+    os.unlink(INCOMING_SOCKET_PATH)
+    os.unlink(OUTGOING_SOCKET_PATH)
+
+if __name__ == "__main__":
+    main()
+
